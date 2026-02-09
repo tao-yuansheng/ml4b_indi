@@ -58,6 +58,7 @@ Check for:
 3. Capitalization errors
 4. Common industry name formatting
 5. Common abbreviations that should be expanded to their full form
+6. Very vague industry words that should be converted to proper industry terms
 
 If the input is a common abbreviation, expand it to the full industry name:
 - AI → Artificial Intelligence
@@ -72,15 +73,34 @@ If the input is a common abbreviation, expand it to the full industry name:
 - 5G → Fifth Generation Wireless Technology
 - And any other common industry abbreviations
 
+If the input is a very vague word that clearly refers to an industry, convert it to the proper industry term:
+- car/cars → Automotive Industry
+- phone/phones → Telecommunications Industry
+- food → Food and Beverage Industry
+- bank/banks → Banking Industry
+- plane/planes/airplane → Aviation Industry
+- ship/ships → Maritime Industry
+- hotel/hotels → Hospitality Industry
+- movie/movies/film → Entertainment Industry
+- game/games → Gaming Industry
+- drug/drugs/medicine → Pharmaceutical Industry
+- clothes/clothing → Fashion Industry
+- house/houses/home/homes → Real Estate Industry
+- oil/gas → Energy Industry
+- farm/farming → Agriculture Industry
+- And any other very vague single words that clearly refer to a specific industry
+
+IMPORTANT: Only convert very vague, simple words. Do NOT convert if the input is already specific or contains multiple words describing an industry.
+
 Respond ONLY with a valid JSON object in this exact format, nothing else:
 {{
     "has_issues": true or false,
     "corrected_text": "the corrected version (expanded abbreviation, properly capitalized and formatted)",
-    "issues_found": ["list of specific issues found, e.g., 'abbreviation expanded', 'misspelled word', 'capitalization error'"]
+    "issues_found": ["list of specific issues found, e.g., 'abbreviation expanded', 'misspelled word', 'capitalization error', 'vague term converted to industry name'"]
 }}
 
-If no issues are found AND it's not an abbreviation, has_issues should be false and issues_found should be empty.
-If it's an abbreviation, has_issues should be true and issues_found should include "abbreviation expanded"."""
+If no issues are found AND it's not an abbreviation or vague term, has_issues should be false and issues_found should be empty.
+If it's an abbreviation or vague term, has_issues should be true and issues_found should include the appropriate description."""
 
     try:
         response = llm.invoke(grammar_prompt)
@@ -354,8 +374,16 @@ else:
         if st.session_state.grammar_checked_input is not None:
             corrected_input = st.session_state.grammar_checked_input
 
-            with st.spinner("Validating industry..."):
-                validation_result = validate_industry(corrected_input)
+            # Only validate if we haven't validated this input yet
+            if 'validation_result' not in st.session_state or st.session_state.get('last_validated_input') != corrected_input:
+                with st.spinner("Validating industry..."):
+                    validation_result = validate_industry(corrected_input)
+                    # Store validation result and input in session state to avoid re-validation
+                    st.session_state.validation_result = validation_result
+                    st.session_state.last_validated_input = corrected_input
+            else:
+                # Use cached validation result
+                validation_result = st.session_state.validation_result
 
             if validation_result["is_valid"]:
                 # Industry is valid - confirm and proceed
@@ -381,6 +409,9 @@ else:
                     if st.button("Try Different Input"):
                         st.session_state.confirmed_industry = None
                         st.session_state.grammar_checked_input = None
+                        # Clear validation cache when trying different input
+                        st.session_state.validation_result = None
+                        st.session_state.last_validated_input = None
                         st.rerun()
 
 # --- Only proceed if an industry has been confirmed ---
