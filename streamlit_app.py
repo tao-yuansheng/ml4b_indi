@@ -22,7 +22,8 @@ we `.streamlit/secrets.toml` and paste your Google API key:
     llm = ChatGoogleGenerativeAI(
         # model="gemini-3-flash-preview",
         model="gemma-3-27b-it",
-        google_api_key=st.secrets["GOOGLE_API_KEY"]
+        google_api_key=st.secrets["GOOGLE_API_KEY"],
+        temperature=0.3  # Lower temperature for more consistent outputs
     )
 except Exception as e:
     st.error("⚠️ **Failed to Initialize Language Model**")
