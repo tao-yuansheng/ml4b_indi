@@ -227,7 +227,7 @@ else:
                     key="suggestion_radio"
                 )
 
-                col1, col2 = st.columns([1, 4])
+                col1, col2 = st.columns(2)
                 with col1:
                     if st.button("Confirm Selection", type="primary"):
                         st.session_state.confirmed_industry = st.session_state.selected_suggestion
