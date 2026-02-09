@@ -1,0 +1,4 @@
+*.pdf
+*.docx
+.streamlit/secrets.toml
+.env
