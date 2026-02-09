@@ -23,7 +23,7 @@ we `.streamlit/secrets.toml` and paste your Google API key:
         # model="gemini-3-flash-preview",
         model="gemma-3-27b-it",
         google_api_key=st.secrets["GOOGLE_API_KEY"],
-        temperature=0.3  # Lower temperature for more consistent outputs
+        temperature=0.15  # Lower temperature for more consistent word counts
     )
 except Exception as e:
     st.error("⚠️ **Failed to Initialize Language Model**")
@@ -164,6 +164,150 @@ Use the EXACT titles from the list above. Do not modify or paraphrase them."""
         st.stop()
 
 
+# --- Helper function: Clean Report (Remove Word Count) ---
+def clean_report_text(text):
+    """Remove any word count information that the LLM might have included."""
+    import re
+    # Remove lines like "(Word Count: 123)" or "Word Count: 123 words" etc.
+    text = re.sub(r'\(?\s*[Ww]ord\s+[Cc]ount\s*:?\s*\d+\s*[Ww]ords?\s*\)?', '', text)
+    # Remove standalone word count lines
+    lines = text.split('\n')
+    cleaned_lines = [line for line in lines if not re.search(r'^\s*\(?\s*[Ww]ord\s+[Cc]ount', line)]
+    return '\n'.join(cleaned_lines).strip()
+
+
+# --- Helper function: Trim Report ---
+def trim_report(report_text, target_words=480):
+    """Intelligently trim report to target word count while preserving structure."""
+    trim_prompt = f"""The following report is too long. Please trim it to approximately {target_words} words (MUST be between 400-500 words).
+
+Preserve:
+- The title and all section headings
+- Key information and main points
+- Professional tone and structure
+
+Remove:
+- Redundant details
+- Less critical information
+- Verbose phrasing
+
+IMPORTANT: DO NOT include word count in the report (no "Word Count:" or similar text).
+
+Report to trim:
+{report_text}
+
+Return the trimmed report in markdown format, ensuring it's {target_words} words or fewer (but at least 400 words). DO NOT include word count:"""
+
+    try:
+        response = llm.invoke(trim_prompt)
+        trimmed_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
+        return trimmed_text
+    except Exception as e:
+        st.error(f"⚠️ **API Error**: Failed to trim report. Error: {str(e)}")
+        st.warning("Returning original report.")
+        return report_text
+
+
+# --- Helper function: Expand Report ---
+def expand_report(report_text, sources, target_words=450):
+    """Intelligently expand report to target word count using source material."""
+    expand_prompt = f"""The following report is too short. Please expand it to approximately {target_words} words (MUST be between 400-500 words).
+
+Add more details from the provided sources about:
+- Industry trends and developments
+- Key players and their roles
+- Challenges and opportunities
+- Market dynamics
+
+Maintain:
+- The existing structure and headings
+- Professional tone
+- Markdown formatting
+
+IMPORTANT: DO NOT include word count in the report (no "Word Count:" or similar text).
+
+Report to expand:
+{report_text}
+
+Additional sources to draw from:
+{sources[:2000]}
+
+Return the expanded report in markdown format, ensuring it's between 400-500 words. DO NOT include word count:"""
+
+    try:
+        response = llm.invoke(expand_prompt)
+        expanded_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
+        return expanded_text
+    except Exception as e:
+        st.error(f"⚠️ **API Error**: Failed to expand report. Error: {str(e)}")
+        st.warning("Returning original report.")
+        return report_text
+
+
+# --- Helper function: Generate Report with Validation ---
+def generate_report_with_validation(industry, combined_text):
+    """Generate report with word count validation and automatic trim/expand if needed."""
+
+    # Generate report with emphatic word count requirements
+    prompt = f"""CRITICAL REQUIREMENT - WORD COUNT: 400-480 words MAXIMUM. Do not exceed this under any circumstances.
+
+You are a market research assistant for a large corporation.
+Using only the following Wikipedia sources, write a professional industry report on: {industry}
+
+The report must:
+1. WORD COUNT: Be between 400 and 480 words (count carefully as you write)
+2. Format: Markdown with clear title (#) and subtitles (##)
+3. Content: Overview, major players, trends, and challenges
+4. NO dates of report generation
+5. NO word count in the report (do not write "Word Count:" or similar)
+6. Professional corporate tone suitable for business executives
+7. Based solely on the provided sources
+
+Sources:
+{combined_text}
+
+REMINDER: Your report MUST be 400-480 words. Count as you write. DO NOT include word count in the report.
+
+Write the report now:"""
+
+    # Generate report with spinner
+    with st.spinner("Generating report..."):
+        try:
+            response = llm.invoke(prompt)
+            report_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
+
+            # Clean any word count text the LLM might have added
+            report_text = clean_report_text(report_text)
+        except Exception as e:
+            st.error(f"⚠️ **API Error**: Failed to generate report. Error: {str(e)}")
+            st.warning("Please verify your API key is valid and has sufficient quota.")
+            st.stop()
+
+        # Count words in generated report
+        word_count = len(report_text.split())
+
+    # Check if within acceptable range (400-500 words)
+    if 400 <= word_count <= 500:
+        return report_text, word_count, "success"
+
+    # If not within range, trim or expand to fit
+    if word_count > 500:
+        with st.spinner("Trimming report to fit word limit..."):
+            report_text = trim_report(report_text, target_words=480)
+            # Clean any word count text after trimming
+            report_text = clean_report_text(report_text)
+        status = "trimmed"
+    else:  # word_count < 400
+        with st.spinner("Expanding report to meet word requirement..."):
+            report_text = expand_report(report_text, combined_text, target_words=450)
+            # Clean any word count text after expanding
+            report_text = clean_report_text(report_text)
+        status = "expanded"
+
+    final_word_count = len(report_text.split())
+    return report_text, final_word_count, status
+
+
 # --- Step 1: Input validation with grammar checking ---
 # Initialize session state variables
 if "confirmed_industry" not in st.session_state:
@@ -175,7 +319,7 @@ if "selected_suggestion" not in st.session_state:
 if "last_input" not in st.session_state:
     st.session_state.last_input = ""
 
-industry_input = st.text_input("Enter an industry (e.g. Electric Vehicles, Renewable Energy):")
+industry_input = st.text_input("Enter an industry:")
 
 # Reset everything if the user types a new/different industry
 if industry_input != st.session_state.last_input:
@@ -199,7 +343,7 @@ else:
                 grammar_result = check_grammar_and_typos(industry_input)
 
             if grammar_result["has_issues"]:
-                st.info(f"✏️ Auto-corrected: **{industry_input}** → **{grammar_result['corrected_text']}**")
+                st.success(f"✏️ Auto-corrected: **{industry_input}** → **{grammar_result['corrected_text']}**")
                 # Automatically use the corrected version
                 st.session_state.grammar_checked_input = grammar_result["corrected_text"]
             else:
@@ -246,10 +390,9 @@ if st.session_state.confirmed_industry:
     st.success(f"Confirmed industry: {industry}")
 
     # --- Step 2: Wikipedia retrieval ---
-    st.info("Searching Wikipedia for relevant pages...")
-
-    retriever = WikipediaRetriever(top_k_results=10, doc_content_chars_max=4000)
-    results = retriever.invoke(industry)
+    with st.spinner("Searching Wikipedia for relevant pages..."):
+        retriever = WikipediaRetriever(top_k_results=10, doc_content_chars_max=4000)
+        results = retriever.invoke(industry)
 
     # Re-rank results using LLM to select top 5 most relevant
     with st.spinner("Ranking pages by relevance..."):
@@ -261,42 +404,21 @@ if st.session_state.confirmed_industry:
         title = doc.metadata.get("title", "Title not available")
         st.write(f"{i}. **{title}** - {url}")
 
-    # --- Step 3: Report generation ---
-    st.info("Generating your industry report...")
-
+    # --- Step 3: Report generation with word count validation ---
     combined_text = "\n\n".join([doc.page_content for doc in results])
 
-    prompt = f"""You are a market research assistant for a large corporation.
-Using only the following Wikipedia sources, write a professional industry report on: {industry}
+    # Generate report with automatic word count enforcement
+    report_text, word_count, status = generate_report_with_validation(
+        industry, combined_text
+    )
 
-The report must:
-- Be written in markdown format
-- have a clear title (#)
-- have clear subtitles for each section (##)
-- NOT include your written date
-- Be STRICTLY under 480 words but more than 400 words
-- Cover key aspects of the industry such as overview, major players, trends, and challenges
-- Be based solely on the provided sources
-- Be written in a professional tone
-
-
-Sources:
-{combined_text}
-
-Write the report now:"""
-
-    try:
-        response = llm.invoke(prompt)
-        report_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
-    except Exception as e:
-        st.error(f"⚠️ **API Error**: Failed to generate report. Error: {str(e)}")
-        st.warning("""
-        Please verify:
-        - Your API key is valid and properly configured in `.streamlit/secrets.toml`
-        - Your API key has sufficient quota
-        - You have an active internet connection
-        """)
-        st.stop()
+    # Show final success message
+    if status == "success":
+        st.success("✓ Report generated successfully!")
+    elif status == "trimmed":
+        st.success("✓ Report generated and trimmed to fit word limit!")
+    elif status == "expanded":
+        st.success("✓ Report generated and expanded to meet word requirement!")
 
     st.divider()
 
@@ -312,5 +434,11 @@ Write the report now:"""
 
     st.markdown(report_text)
     st.divider()
-    st.caption(f"Word count: {len(report_text.split())} words")
+
+    # Display word count with color coding
+    if 400 <= word_count <= 500:
+        st.success(f"✓ Word count: {word_count} words")
+    else:
+        # This should rarely happen due to trim/expand, but just in case
+        st.warning(f"⚠️ Word count: {word_count} words (target: 400-500)")
 
