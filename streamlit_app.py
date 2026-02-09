@@ -270,13 +270,14 @@ if st.session_state.confirmed_industry:
 Using only the following Wikipedia sources, write a professional industry report on: {industry}
 
 The report must:
-- have a clear title
-- not have any dates
+- Be written in markdown format
+- have a clear title (#)
+- have clear subtitles for each section (##)
+- NOT include your written date
 - Be STRICTLY under 480 words but more than 400 words
 - Cover key aspects of the industry such as overview, major players, trends, and challenges
 - Be based solely on the provided sources
 - Be written in a professional tone
-- Be written in markdown format with clear sub titles and sections for each aspect
 
 
 Sources:
