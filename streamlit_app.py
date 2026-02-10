@@ -3,44 +3,158 @@ import json
 from langchain_community.retrievers import WikipediaRetriever
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-# --- Set up the LLM once at the top so it can be reused ---
-try:
-    # Check if API key exists in secrets
-    if "GOOGLE_API_KEY" not in st.secrets:
-        st.error("⚠️ **API Key Not Found**")
-        st.warning("""
-        **For supervisors/reviewers**:
-we `.streamlit/secrets.toml` and paste your Google API key:
-        ```
-        GOOGLE_API_KEY = "your-api-key-here"
-        ```
+# --- API Key Management Functions ---
+def initialize_llm(api_key):
+    """Initialize LLMs with provided API key."""
+    try:
+        # Primary LLM for validation, grammar checking, and re-ranking
+        llm = ChatGoogleGenerativeAI(
+            model="gemma-3-27b-it",
+            google_api_key=api_key,
+            temperature=0.15
+        )
+        # Store in session state for reuse
+        st.session_state.llm = llm
 
-        Then restart the application.
-        """)
-        st.stop()
+        # Report-specific LLM for report generation, trimming, and expanding
+        report_llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash-lite",
+            google_api_key=api_key,
+            temperature=0.15
+        )
+        st.session_state.report_llm = report_llm
 
-    llm = ChatGoogleGenerativeAI(
-        # model="gemini-3-flash-preview",
-        model="gemma-3-27b-it",
-        google_api_key=st.secrets["GOOGLE_API_KEY"],
-        temperature=0.15  # Lower temperature for more consistent word counts
-    )
-except Exception as e:
-    st.error("⚠️ **Failed to Initialize Language Model**")
-    st.warning(f"""
-    Error: {str(e)}
+        return True, "LLMs initialized successfully"
+    except Exception as e:
+        return False, f"Failed to initialize LLMs: {str(e)}"
 
-    **For supervisors/reviewers**:
+def validate_api_key(api_key):
+    """Validate API key with three-tier approach."""
+    # Tier 1: Presence check
+    if not api_key or not api_key.strip():
+        return False, "API key is empty"
 
-    Please open `.streamlit/secrets.toml` and add your Google API key in the following format:
-    ```
-    GOOGLE_API_KEY = "your-api-key-here"
-    ```
+    # Tier 2: Format validation (Google API keys typically start with "AIza")
+    api_key = api_key.strip()
+    if not api_key.startswith("AIza"):
+        return False, "Invalid format: Google API keys typically start with 'AIza'"
 
-    Then restart the application.
+    if len(api_key) < 30:
+        return False, "API key appears too short"
 
-    Note: The API key should be a valid Google Generative AI API key.
-    """)
+    # Tier 3: Actual API test
+    try:
+        test_llm = ChatGoogleGenerativeAI(
+            model="gemma-3-27b-it",
+            google_api_key=api_key,
+            temperature=0.15
+        )
+        # Minimal test prompt
+        test_llm.invoke("test")
+        return True, "API key validated successfully"
+    except Exception as e:
+        error_msg = str(e)
+        if "API key" in error_msg or "authentication" in error_msg.lower():
+            return False, "Invalid API key or authentication failed"
+        elif "quota" in error_msg.lower():
+            return False, "API key valid but quota exceeded"
+        else:
+            return False, f"Validation error: {error_msg}"
+
+# --- Initialize session state for API key management ---
+if "api_key" not in st.session_state:
+    st.session_state.api_key = None
+if "api_key_validated" not in st.session_state:
+    st.session_state.api_key_validated = False
+if "llm" not in st.session_state:
+    st.session_state.llm = None
+if "report_llm" not in st.session_state:
+    st.session_state.report_llm = None
+
+# --- Sidebar: API Key Configuration ---
+st.sidebar.title("🔑 Configuration")
+st.sidebar.markdown("---")
+
+# API Key input
+st.sidebar.subheader("Google API Key")
+
+api_key_input = st.sidebar.text_input(
+    "Enter your API key",
+    value=st.session_state.api_key if st.session_state.api_key else "",
+    type="password",
+    key="api_key_input_field",
+    label_visibility="collapsed"
+)
+
+# Validate button
+if st.sidebar.button("Validate API Key", type="primary", use_container_width=True):
+    if api_key_input and api_key_input.strip():
+        with st.sidebar.spinner("Validating API key..."):
+            is_valid, message = validate_api_key(api_key_input.strip())
+
+            if is_valid:
+                st.session_state.api_key = api_key_input.strip()
+                st.session_state.api_key_validated = True
+                # Initialize LLM
+                success, init_message = initialize_llm(st.session_state.api_key)
+                if success:
+                    st.sidebar.success("✓ API key validated successfully!")
+                    st.rerun()
+                else:
+                    st.sidebar.error(f"⚠️ {init_message}")
+                    st.session_state.api_key_validated = False
+            else:
+                st.sidebar.error(f"⚠️ {message}")
+                st.session_state.api_key_validated = False
+    else:
+        st.sidebar.warning("Please enter an API key")
+
+# Show validation status
+if st.session_state.api_key_validated:
+    st.sidebar.success("API Key Active")
+    # Option to change key
+    if st.sidebar.button("Change API Key", use_container_width=True):
+        st.session_state.api_key = None
+        st.session_state.api_key_validated = False
+        st.session_state.llm = None
+        st.session_state.report_llm = None
+        st.rerun()
+else:
+    st.sidebar.warning("API Key Required")
+    st.sidebar.info("""
+**Need an API key?**
+
+Get a free Google Generative AI API key:
+1. Visit [Google AI Studio](https://makersuite.google.com/app/apikey)
+2. Sign in with your Google account
+3. Create an API key
+4. Paste it above
+""")
+
+st.sidebar.markdown("---")
+
+# --- Main Application ---
+# Block main app if API key not validated
+if not st.session_state.api_key_validated:
+    st.title("Market Research Assistant")
+    st.write("Generate professional industry reports powered by AI.")
+    st.info("👈 **Please enter your Google API Key in the sidebar to get started.**")
+    st.markdown("""
+### What This App Does
+
+This Market Research Assistant helps you:
+- Generate comprehensive industry reports
+- Analyze market trends and key players
+- Access up-to-date information from Wikipedia
+- Get professional, business-ready insights
+
+### Getting Started
+
+1. Enter your Google API key in the sidebar
+2. Click "Validate API Key"
+3. Enter an industry name
+4. Get your report in seconds!
+""")
     st.stop()
 
 # --- Title and description ---
@@ -75,7 +189,6 @@ If the input is a common abbreviation, expand it to the full industry name:
 
 If the input is a very vague word that clearly refers to an industry, convert it to the proper industry term:
 - car/cars → Automotive Industry
-- phone/phones → Telecommunications Industry
 - food → Food and Beverage Industry
 - bank/banks → Banking Industry
 - plane/planes/airplane → Aviation Industry
@@ -91,6 +204,7 @@ If the input is a very vague word that clearly refers to an industry, convert it
 - And any other very vague single words that clearly refer to a specific industry
 
 IMPORTANT: Only convert very vague, simple words. Do NOT convert if the input is already specific or contains multiple words describing an industry.
+For example: "smartphone" is a valid industry, so no need to convert that.
 
 Respond ONLY with a valid JSON object in this exact format, nothing else:
 {{
@@ -103,7 +217,7 @@ If no issues are found AND it's not an abbreviation or vague term, has_issues sh
 If it's an abbreviation or vague term, has_issues should be true and issues_found should include the appropriate description."""
 
     try:
-        response = llm.invoke(grammar_prompt)
+        response = st.session_state.llm.invoke(grammar_prompt)
         raw_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
         raw_text = raw_text.strip().replace("```json", "").replace("```", "").strip()
         return json.loads(raw_text)
@@ -128,7 +242,7 @@ If is_valid is true, suggestions can be an empty list.
 If is_valid is false, suggestions must contain exactly 3 real, well-known industries that are similar to or related to what was entered."""
 
     try:
-        response = llm.invoke(validation_prompt)
+        response = st.session_state.llm.invoke(validation_prompt)
         raw_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
         raw_text = raw_text.strip().replace("```json", "").replace("```", "").strip()
         return json.loads(raw_text)
@@ -162,7 +276,7 @@ Respond ONLY with a valid JSON array containing exactly 5 titles, nothing else:
 Use the EXACT titles from the list above. Do not modify or paraphrase them."""
 
     try:
-        response = llm.invoke(rerank_prompt)
+        response = st.session_state.llm.invoke(rerank_prompt)
         raw_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
         raw_text = raw_text.strip().replace("```json", "").replace("```", "").strip()
         selected_titles = json.loads(raw_text)
@@ -196,6 +310,53 @@ def clean_report_text(text):
     return '\n'.join(cleaned_lines).strip()
 
 
+# --- Helper function: Sanitize Markdown Formatting ---
+def sanitize_markdown(text):
+    """Fix common markdown formatting issues that cause inconsistent rendering."""
+    import re
+
+    # Fix unclosed italic markers (odd number of single asterisks or underscores)
+    # This regex finds and fixes unmatched single asterisks/underscores that break formatting
+
+    # Remove any stray single asterisks or underscores that aren't part of proper markdown
+    # Match isolated asterisks/underscores not followed by their closing pair
+    lines = text.split('\n')
+    fixed_lines = []
+
+    for line in lines:
+        # Skip heading lines (they should keep their formatting)
+        if line.strip().startswith('#'):
+            fixed_lines.append(line)
+            continue
+
+        # Remove inline code backticks (both single ` and triple ```)
+        # This prevents text from being rendered as code (green monospace)
+        line = re.sub(r'```[\s\S]*?```', '', line)  # Remove code blocks
+        line = line.replace('`', '')  # Remove inline code markers
+
+        # Count asterisks and underscores to detect unclosed formatting
+        asterisk_count = line.count('*') - line.count('**') * 2
+        underscore_count = line.count('_') - line.count('__') * 2
+
+        # If odd number of single markers, likely has unclosed formatting
+        # Remove all single markers and keep only bold (**) markers
+        if asterisk_count % 2 != 0 or underscore_count % 2 != 0:
+            # Keep bold markers (**text**) but remove unclosed single markers
+            # First, protect bold markers
+            line = re.sub(r'\*\*(.+?)\*\*', r'⟪BOLD⟫\1⟪/BOLD⟫', line)
+            line = re.sub(r'__(.+?)__', r'⟪BOLD⟫\1⟪/BOLD⟫', line)
+
+            # Remove remaining single asterisks and underscores
+            line = line.replace('*', '').replace('_', '')
+
+            # Restore bold markers
+            line = line.replace('⟪BOLD⟫', '**').replace('⟪/BOLD⟫', '**')
+
+        fixed_lines.append(line)
+
+    return '\n'.join(fixed_lines)
+
+
 # --- Helper function: Trim Report ---
 def trim_report(report_text, target_words=480):
     """Intelligently trim report to target word count while preserving structure."""
@@ -211,7 +372,10 @@ Remove:
 - Less critical information
 - Verbose phrasing
 
-IMPORTANT: DO NOT include word count in the report (no "Word Count:" or similar text).
+IMPORTANT:
+- DO NOT include word count in the report (no "Word Count:" or similar text)
+- DO NOT use backticks (`) or code formatting
+- Use **bold** only for emphasis, no italic or code formatting
 
 Report to trim:
 {report_text}
@@ -219,7 +383,7 @@ Report to trim:
 Return the trimmed report in markdown format, ensuring it's {target_words} words or fewer (but at least 400 words). DO NOT include word count:"""
 
     try:
-        response = llm.invoke(trim_prompt)
+        response = st.session_state.report_llm.invoke(trim_prompt)
         trimmed_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
         return trimmed_text
     except Exception as e:
@@ -244,7 +408,10 @@ Maintain:
 - Professional tone
 - Markdown formatting
 
-IMPORTANT: DO NOT include word count in the report (no "Word Count:" or similar text).
+IMPORTANT:
+- DO NOT include word count in the report (no "Word Count:" or similar text)
+- DO NOT use backticks (`) or code formatting
+- Use **bold** only for emphasis, no italic or code formatting
 
 Report to expand:
 {report_text}
@@ -255,7 +422,7 @@ Additional sources to draw from:
 Return the expanded report in markdown format, ensuring it's between 400-500 words. DO NOT include word count:"""
 
     try:
-        response = llm.invoke(expand_prompt)
+        response = st.session_state.report_llm.invoke(expand_prompt)
         expanded_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
         return expanded_text
     except Exception as e:
@@ -275,13 +442,14 @@ You are a market research assistant for a large corporation.
 Using only the following Wikipedia sources, write a professional industry report on: {industry}
 
 The report must:
-1. WORD COUNT: Be between 400 and 480 words (count carefully as you write)
+1. WORD COUNT: Be between 400 and 480 words (count carefully as you write, better less than more)
 2. Format: Markdown with clear title (#) and subtitles (##)
 3. Content: Overview, major players, trends, and challenges
 4. NO dates of report generation
 5. NO word count in the report (do not write "Word Count:" or similar)
 6. Professional corporate tone suitable for business executives
 7. Based solely on the provided sources
+8. FORMATTING: Use consistent markdown formatting. Use **bold** only for emphasis on key terms. Do NOT use backticks (`) or code formatting. Do NOT mix italic and regular text randomly. Keep formatting clean and professional with regular text only
 
 Sources:
 {combined_text}
@@ -290,14 +458,16 @@ REMINDER: Your report MUST be 400-480 words. Count as you write. DO NOT include 
 
 Write the report now:"""
 
-    # Generate report with spinner
+    # Generate report with spinner (using gemini-2.0-flash-lite)
     with st.spinner("Generating report..."):
         try:
-            response = llm.invoke(prompt)
+            response = st.session_state.report_llm.invoke(prompt)
             report_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
 
             # Clean any word count text the LLM might have added
             report_text = clean_report_text(report_text)
+            # Sanitize markdown formatting to fix inconsistencies
+            report_text = sanitize_markdown(report_text)
         except Exception as e:
             st.error(f"⚠️ **API Error**: Failed to generate report. Error: {str(e)}")
             st.warning("Please verify your API key is valid and has sufficient quota.")
@@ -316,12 +486,16 @@ Write the report now:"""
             report_text = trim_report(report_text, target_words=480)
             # Clean any word count text after trimming
             report_text = clean_report_text(report_text)
+            # Sanitize markdown formatting
+            report_text = sanitize_markdown(report_text)
         status = "trimmed"
     else:  # word_count < 400
         with st.spinner("Expanding report to meet word requirement..."):
             report_text = expand_report(report_text, combined_text, target_words=450)
             # Clean any word count text after expanding
             report_text = clean_report_text(report_text)
+            # Sanitize markdown formatting
+            report_text = sanitize_markdown(report_text)
         status = "expanded"
 
     final_word_count = len(report_text.split())
@@ -420,14 +594,24 @@ if st.session_state.confirmed_industry:
     industry = st.session_state.confirmed_industry
     st.success(f"Confirmed industry: {industry}")
 
-    # --- Step 2: Wikipedia retrieval ---
+    # Create progress indicators
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    # --- Step 1: Wikipedia retrieval ---
+    status_text.text("🔍 Step 1/4: Searching Wikipedia for relevant pages...")
+    progress_bar.progress(0.25)
+
     with st.spinner("Searching Wikipedia for relevant pages..."):
         retriever = WikipediaRetriever(top_k_results=10, doc_content_chars_max=4000)
         results = retriever.invoke(industry)
 
-    # Re-rank results using LLM to select top 5 most relevant
+    # --- Step 2: Re-rank results ---
+    status_text.text("📊 Step 2/4: Ranking pages by relevance...")
+    progress_bar.progress(0.5)
+
     with st.spinner("Ranking pages by relevance..."):
-        results = rerank_results(industry, results)
+        results = rerank_results(industry, results) 
 
     st.subheader("Top 5 Relevant Wikipedia Pages")
     for i, doc in enumerate(results, 1):
@@ -435,13 +619,31 @@ if st.session_state.confirmed_industry:
         title = doc.metadata.get("title", "Title not available")
         st.write(f"{i}. **{title}** - {url}")
 
-    # --- Step 3: Report generation with word count validation ---
+    # --- Step 3: Report generation ---
+    status_text.text("📝 Step 3/4: Generating industry report...")
+    progress_bar.progress(0.75)
+
     combined_text = "\n\n".join([doc.page_content for doc in results])
 
     # Generate report with automatic word count enforcement
     report_text, word_count, status = generate_report_with_validation(
         industry, combined_text
     )
+
+    # --- Step 4: Finalization ---
+    if status != "success":
+        # If we needed to trim/expand, show intermediate progress
+        status_text.text("⚙️ Step 4/4: Finalizing report (adjusting word count)...")
+    else:
+        status_text.text("✅ Step 4/4: Report complete!")
+
+    progress_bar.progress(1.0)
+
+    # Clear progress indicators after a moment
+    import time
+    time.sleep(0.5)
+    progress_bar.empty()
+    status_text.empty()
 
     # Show final success message
     if status == "success":
