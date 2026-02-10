@@ -47,8 +47,12 @@ This application is an intelligent market research assistant designed for busine
 
 - **🎨 User Experience**
   - Clean, intuitive Streamlit interface
+  - **Example industries quick-start**: One-click buttons for popular industries (AI, EV, Renewable Energy, etc.)
   - Auto-refresh on new input (clears previous results)
   - **Animated spinner progress indicators** (no cluttered messages)
+  - **Report statistics**: Display processing time, model used, and sources analyzed
+  - **Download button**: Export reports as Markdown files
+  - **"Generate Another Report" button**: Quick reset for new searches
   - Comprehensive error handling with clear guidance
   - Professional status messages
 
@@ -96,8 +100,9 @@ The application will open in your default web browser at `http://localhost:8501`
    - **Note**: The Gemma 3-27b-it model has a free tier
 
 2. **Enter an Industry**
-   - Type an industry name (e.g., "Electric Vehicles", "Renewable Energy")
-   - Or use common abbreviations (e.g., "AI", "EV", "ML", "IoT")
+   - **Quick-start**: Click one of the example buttons (🤖 AI, ⚡ EV, 🌱 Renewable Energy, 💊 Pharmaceuticals, 🎮 Gaming)
+   - **Or type manually**: Enter any industry name (e.g., "Electric Vehicles", "Renewable Energy")
+   - **Or use abbreviations**: Common abbreviations work too (e.g., "AI", "ML", "IoT")
 
 3. **Automatic Processing**
    - App automatically corrects typos and grammar errors
@@ -121,9 +126,14 @@ The application will open in your default web browser at `http://localhost:8501`
    - Displays accurate word count with green checkmark (always within range)
    - Clean, professional presentation without word count in report text
 
-7. **Start New Search**
-   - Enter a new industry to automatically clear previous results
-   - No need to refresh the page manually
+7. **Report Statistics & Actions**
+   - **Statistics Display**: View processing time, model used, and sources analyzed
+   - **Download Button**: Export report as Markdown file (`.md`)
+   - **Generate Another Report**: One-click button to start a new search
+
+8. **Start New Search**
+   - Click "Generate Another Report" for quick reset
+   - Or enter a new industry to automatically clear previous results
 
 ## Project Structure
 

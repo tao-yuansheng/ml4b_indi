@@ -161,6 +161,32 @@ This Market Research Assistant helps you:
 st.title("Market Research Assistant")
 st.write("Enter an industry below and I will generate a report for you.")
 
+# --- Example Industries Quick-Start ---
+st.markdown("**💡 Try these examples:**")
+col1, col2, col3, col4, col5 = st.columns(5)
+with col1:
+    if st.button("🤖 AI", use_container_width=True):
+        st.session_state.example_selected = "AI"
+        st.rerun()
+with col2:
+    if st.button("⚡ EV", use_container_width=True):
+        st.session_state.example_selected = "EV"
+        st.rerun()
+with col3:
+    if st.button("🌱 Renewable Energy", use_container_width=True):
+        st.session_state.example_selected = "Renewable Energy"
+        st.rerun()
+with col4:
+    if st.button("💊 Pharmaceuticals", use_container_width=True):
+        st.session_state.example_selected = "Pharmaceuticals"
+        st.rerun()
+with col5:
+    if st.button("🎮 Gaming", use_container_width=True):
+        st.session_state.example_selected = "Gaming"
+        st.rerun()
+
+st.markdown("")  # Add spacing
+
 # --- Helper function: Grammar Check ---
 def check_grammar_and_typos(text):
     """Check for grammar issues, typos, and expand common abbreviations."""
@@ -512,8 +538,16 @@ if "selected_suggestion" not in st.session_state:
     st.session_state.selected_suggestion = None
 if "last_input" not in st.session_state:
     st.session_state.last_input = ""
+if "example_selected" not in st.session_state:
+    st.session_state.example_selected = None
 
-industry_input = st.text_input("Enter an industry:")
+# Handle example selection
+default_value = st.session_state.example_selected if st.session_state.example_selected else ""
+industry_input = st.text_input("Enter an industry:", value=default_value)
+
+# Clear example selection after use
+if st.session_state.example_selected:
+    st.session_state.example_selected = None
 
 # Reset everything if the user types a new/different industry
 if industry_input != st.session_state.last_input:
@@ -593,6 +627,10 @@ if st.session_state.confirmed_industry:
 
     industry = st.session_state.confirmed_industry
     st.success(f"Confirmed industry: {industry}")
+
+    # Track processing time
+    import time
+    start_time = time.time()
 
     # Create progress indicators
     progress_bar = st.progress(0)
@@ -674,4 +712,44 @@ if st.session_state.confirmed_industry:
     else:
         # This should rarely happen due to trim/expand, but just in case
         st.warning(f"⚠️ Word count: {word_count} words (target: 400-500)")
+
+    # Calculate processing time
+    end_time = time.time()
+    processing_time = end_time - start_time
+
+    # Display statistics
+    st.divider()
+    st.markdown("### 📊 Report Statistics")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Processing Time", f"{processing_time:.2f}s")
+    with col2:
+        st.metric("Model Used", "Gemini 2.5-flash-lite")
+    with col3:
+        st.metric("Sources Analyzed", "5 Wikipedia pages")
+
+    st.divider()
+
+    # Action buttons
+    col1, col2 = st.columns(2)
+    with col1:
+        # Download button
+        st.download_button(
+            label="📥 Download Report",
+            data=report_text,
+            file_name=f"{industry.replace(' ', '_')}_report.md",
+            mime="text/markdown",
+            use_container_width=True
+        )
+    with col2:
+        # Generate another report button
+        if st.button("🔄 Generate Another Report", type="primary", use_container_width=True):
+            # Clear all session state variables
+            st.session_state.confirmed_industry = None
+            st.session_state.grammar_checked_input = None
+            st.session_state.selected_suggestion = None
+            st.session_state.last_input = ""
+            st.session_state.validation_result = None
+            st.session_state.last_validated_input = None
+            st.rerun()
 
