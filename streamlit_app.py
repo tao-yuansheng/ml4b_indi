@@ -1,5 +1,7 @@
 import streamlit as st
 import json
+import time
+import re
 from langchain_community.retrievers import WikipediaRetriever
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -161,31 +163,37 @@ This Market Research Assistant helps you:
 st.title("Market Research Assistant")
 st.write("Enter an industry below and I will generate a report for you.")
 
-# --- Example Industries Quick-Start ---
-st.markdown("**💡 Try these examples:**")
-col1, col2, col3, col4, col5 = st.columns(5)
-with col1:
-    if st.button("🤖 AI", use_container_width=True):
-        st.session_state.example_selected = "AI"
-        st.rerun()
-with col2:
-    if st.button("⚡ EV", use_container_width=True):
-        st.session_state.example_selected = "EV"
-        st.rerun()
-with col3:
-    if st.button("🌱 Renewable Energy", use_container_width=True):
-        st.session_state.example_selected = "Renewable Energy"
-        st.rerun()
-with col4:
-    if st.button("💊 Pharmaceuticals", use_container_width=True):
-        st.session_state.example_selected = "Pharmaceuticals"
-        st.rerun()
-with col5:
-    if st.button("🎮 Gaming", use_container_width=True):
-        st.session_state.example_selected = "Gaming"
-        st.rerun()
 
-st.markdown("")  # Add spacing
+# --- Helper function: Preliminary Input Validation ---
+def is_meaningful_text(text):
+    """Check if input contains meaningful text (not just random symbols)."""
+    # Remove whitespace for checking
+    text = text.strip()
+
+    # Must have some content
+    if len(text) == 0:
+        return False
+
+    # Must have at least 2 characters
+    if len(text) < 2:
+        return False
+
+    # Count alphabetic characters
+    alpha_count = sum(1 for c in text if c.isalpha())
+
+    # Must have at least 2 alphabetic characters (e.g., "AI", "EV")
+    if alpha_count < 2:
+        return False
+
+    # Check if it's mostly alphabetic or spaces (allow some numbers/hyphens for industry names)
+    valid_chars = sum(1 for c in text if c.isalnum() or c.isspace() or c in '-&,.')
+
+    # At least 50% of characters should be valid (alphanumeric, spaces, or common punctuation)
+    if valid_chars / len(text) < 0.5:
+        return False
+
+    return True
+
 
 # --- Helper function: Grammar Check ---
 def check_grammar_and_typos(text):
@@ -327,7 +335,6 @@ Use the EXACT titles from the list above. Do not modify or paraphrase them."""
 # --- Helper function: Clean Report (Remove Word Count) ---
 def clean_report_text(text):
     """Remove any word count information that the LLM might have included."""
-    import re
     # Remove lines like "(Word Count: 123)" or "Word Count: 123 words" etc.
     text = re.sub(r'\(?\s*[Ww]ord\s+[Cc]ount\s*:?\s*\d+\s*[Ww]ords?\s*\)?', '', text)
     # Remove standalone word count lines
@@ -339,8 +346,6 @@ def clean_report_text(text):
 # --- Helper function: Sanitize Markdown Formatting ---
 def sanitize_markdown(text):
     """Fix common markdown formatting issues that cause inconsistent rendering."""
-    import re
-
     # Fix unclosed italic markers (odd number of single asterisks or underscores)
     # This regex finds and fixes unmatched single asterisks/underscores that break formatting
 
@@ -413,9 +418,16 @@ Return the trimmed report in markdown format, ensuring it's {target_words} words
         trimmed_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
         return trimmed_text
     except Exception as e:
-        st.error(f"⚠️ **API Error**: Failed to trim report. Error: {str(e)}")
-        st.warning("Returning original report.")
-        return report_text
+        # Try fallback to Gemma model
+        try:
+            st.info("ℹ️ Using backup model (Gemma) for trimming...")
+            response = st.session_state.llm.invoke(trim_prompt)
+            trimmed_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
+            return trimmed_text
+        except Exception as fallback_error:
+            st.error(f"⚠️ **API Error**: Failed to trim report. Error: {str(fallback_error)}")
+            st.warning("Returning original report.")
+            return report_text
 
 
 # --- Helper function: Expand Report ---
@@ -452,9 +464,16 @@ Return the expanded report in markdown format, ensuring it's between 400-500 wor
         expanded_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
         return expanded_text
     except Exception as e:
-        st.error(f"⚠️ **API Error**: Failed to expand report. Error: {str(e)}")
-        st.warning("Returning original report.")
-        return report_text
+        # Try fallback to Gemma model
+        try:
+            st.info("ℹ️ Using backup model (Gemma) for expansion...")
+            response = st.session_state.llm.invoke(expand_prompt)
+            expanded_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
+            return expanded_text
+        except Exception as fallback_error:
+            st.error(f"⚠️ **API Error**: Failed to expand report. Error: {str(fallback_error)}")
+            st.warning("Returning original report.")
+            return report_text
 
 
 # --- Helper function: Generate Report with Validation ---
@@ -484,7 +503,8 @@ REMINDER: Your report MUST be 400-480 words. Count as you write. DO NOT include 
 
 Write the report now:"""
 
-    # Generate report with spinner (using gemini-2.0-flash-lite)
+    # Generate report with spinner (using gemini-2.5-flash-lite, with Gemma fallback)
+    model_used = "Gemini 2.5-flash-lite"  # Track which model was used
     with st.spinner("Generating report..."):
         try:
             response = st.session_state.report_llm.invoke(prompt)
@@ -495,16 +515,28 @@ Write the report now:"""
             # Sanitize markdown formatting to fix inconsistencies
             report_text = sanitize_markdown(report_text)
         except Exception as e:
-            st.error(f"⚠️ **API Error**: Failed to generate report. Error: {str(e)}")
-            st.warning("Please verify your API key is valid and has sufficient quota.")
-            st.stop()
+            # Try fallback to Gemma model
+            try:
+                st.info("ℹ️ Gemini quota exceeded. Using backup model (Gemma) for report generation...")
+                model_used = "Gemma 3-27b-it (backup)"  # Update model tracking
+                response = st.session_state.llm.invoke(prompt)
+                report_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
+
+                # Clean any word count text the LLM might have added
+                report_text = clean_report_text(report_text)
+                # Sanitize markdown formatting to fix inconsistencies
+                report_text = sanitize_markdown(report_text)
+            except Exception as fallback_error:
+                st.error(f"⚠️ **API Error**: Failed to generate report with both models. Error: {str(fallback_error)}")
+                st.warning("Please verify your API key is valid and has sufficient quota.")
+                st.stop()
 
         # Count words in generated report
         word_count = len(report_text.split())
 
     # Check if within acceptable range (400-500 words)
     if 400 <= word_count <= 500:
-        return report_text, word_count, "success"
+        return report_text, word_count, "success", model_used
 
     # If not within range, trim or expand to fit
     if word_count > 500:
@@ -525,7 +557,7 @@ Write the report now:"""
         status = "expanded"
 
     final_word_count = len(report_text.split())
-    return report_text, final_word_count, status
+    return report_text, final_word_count, status, model_used
 
 
 # --- Step 1: Input validation with grammar checking ---
@@ -538,16 +570,12 @@ if "selected_suggestion" not in st.session_state:
     st.session_state.selected_suggestion = None
 if "last_input" not in st.session_state:
     st.session_state.last_input = ""
-if "example_selected" not in st.session_state:
-    st.session_state.example_selected = None
+if "cached_report" not in st.session_state:
+    st.session_state.cached_report = None
+if "cached_industry" not in st.session_state:
+    st.session_state.cached_industry = None
 
-# Handle example selection
-default_value = st.session_state.example_selected if st.session_state.example_selected else ""
-industry_input = st.text_input("Enter an industry:", value=default_value)
-
-# Clear example selection after use
-if st.session_state.example_selected:
-    st.session_state.example_selected = None
+industry_input = st.text_input("Enter an industry:")
 
 # Reset everything if the user types a new/different industry
 if industry_input != st.session_state.last_input:
@@ -555,9 +583,17 @@ if industry_input != st.session_state.last_input:
     st.session_state.grammar_checked_input = None
     st.session_state.selected_suggestion = None
     st.session_state.last_input = industry_input
+    # Clear cached report when input changes
+    st.session_state.cached_report = None
+    st.session_state.cached_industry = None
 
 if industry_input.strip() == "":
     st.warning("Please enter an industry to continue.")
+    st.session_state.confirmed_industry = None
+    st.session_state.grammar_checked_input = None
+
+elif not is_meaningful_text(industry_input):
+    st.error("❌ Invalid input: Please enter a valid industry name using proper text (not random symbols).")
     st.session_state.confirmed_industry = None
     st.session_state.grammar_checked_input = None
 
@@ -628,60 +664,86 @@ if st.session_state.confirmed_industry:
     industry = st.session_state.confirmed_industry
     st.success(f"Confirmed industry: {industry}")
 
-    # Track processing time
-    import time
-    start_time = time.time()
+    # Check if we already have a cached report for this industry
+    if (st.session_state.cached_industry == industry and
+        st.session_state.cached_report is not None):
+        # Use cached report (avoid regenerating on download button click)
+        report_data = st.session_state.cached_report
+        report_text = report_data["report_text"]
+        word_count = report_data["word_count"]
+        status = report_data["status"]
+        processing_time = report_data["processing_time"]
+        results = report_data["results"]
+        model_used = report_data["model_used"]
+    else:
+        # Generate new report
+        # Track processing time
+        start_time = time.time()
 
-    # Create progress indicators
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+        # Create progress indicators
+        progress_bar = st.progress(0)
+        status_text = st.empty()
 
-    # --- Step 1: Wikipedia retrieval ---
-    status_text.text("🔍 Step 1/4: Searching Wikipedia for relevant pages...")
-    progress_bar.progress(0.25)
+        # --- Step 1: Wikipedia retrieval ---
+        status_text.text("🔍 Step 1/4: Searching Wikipedia for relevant pages...")
+        progress_bar.progress(0.25)
 
-    with st.spinner("Searching Wikipedia for relevant pages..."):
-        retriever = WikipediaRetriever(top_k_results=10, doc_content_chars_max=4000)
-        results = retriever.invoke(industry)
+        with st.spinner("Searching Wikipedia for relevant pages..."):
+            retriever = WikipediaRetriever(top_k_results=10, doc_content_chars_max=4000)
+            results = retriever.invoke(industry)
 
-    # --- Step 2: Re-rank results ---
-    status_text.text("📊 Step 2/4: Ranking pages by relevance...")
-    progress_bar.progress(0.5)
+        # --- Step 2: Re-rank results ---
+        status_text.text("📊 Step 2/4: Ranking pages by relevance...")
+        progress_bar.progress(0.5)
 
-    with st.spinner("Ranking pages by relevance..."):
-        results = rerank_results(industry, results) 
+        with st.spinner("Ranking pages by relevance..."):
+            results = rerank_results(industry, results)
 
+        # --- Step 3: Report generation ---
+        status_text.text("📝 Step 3/4: Generating industry report...")
+        progress_bar.progress(0.75)
+
+        combined_text = "\n\n".join([doc.page_content for doc in results])
+
+        # Generate report with automatic word count enforcement
+        report_text, word_count, status, model_used = generate_report_with_validation(
+            industry, combined_text
+        )
+
+        # --- Step 4: Finalization ---
+        if status != "success":
+            # If we needed to trim/expand, show intermediate progress
+            status_text.text("⚙️ Step 4/4: Finalizing report (adjusting word count)...")
+        else:
+            status_text.text("✅ Step 4/4: Report complete!")
+
+        progress_bar.progress(1.0)
+
+        # Clear progress indicators after a moment
+        time.sleep(0.5)
+        progress_bar.empty()
+        status_text.empty()
+
+        # Calculate processing time
+        processing_time = time.time() - start_time
+
+        # Cache the report
+        st.session_state.cached_report = {
+            "report_text": report_text,
+            "word_count": word_count,
+            "status": status,
+            "processing_time": processing_time,
+            "results": results,
+            "model_used": model_used
+        }
+        st.session_state.cached_industry = industry
+
+    # Display Wikipedia pages (always show, whether cached or new)
     st.subheader("Top 5 Relevant Wikipedia Pages")
     for i, doc in enumerate(results, 1):
         url = doc.metadata.get("source", "URL not available")
         title = doc.metadata.get("title", "Title not available")
         st.write(f"{i}. **{title}** - {url}")
-
-    # --- Step 3: Report generation ---
-    status_text.text("📝 Step 3/4: Generating industry report...")
-    progress_bar.progress(0.75)
-
-    combined_text = "\n\n".join([doc.page_content for doc in results])
-
-    # Generate report with automatic word count enforcement
-    report_text, word_count, status = generate_report_with_validation(
-        industry, combined_text
-    )
-
-    # --- Step 4: Finalization ---
-    if status != "success":
-        # If we needed to trim/expand, show intermediate progress
-        status_text.text("⚙️ Step 4/4: Finalizing report (adjusting word count)...")
-    else:
-        status_text.text("✅ Step 4/4: Report complete!")
-
-    progress_bar.progress(1.0)
-
-    # Clear progress indicators after a moment
-    import time
-    time.sleep(0.5)
-    progress_bar.empty()
-    status_text.empty()
 
     # Show final success message
     if status == "success":
@@ -713,43 +775,28 @@ if st.session_state.confirmed_industry:
         # This should rarely happen due to trim/expand, but just in case
         st.warning(f"⚠️ Word count: {word_count} words (target: 400-500)")
 
-    # Calculate processing time
-    end_time = time.time()
-    processing_time = end_time - start_time
-
     # Display statistics
     st.divider()
-    st.markdown("### 📊 Report Statistics")
-    col1, col2, col3 = st.columns(3)
+    st.markdown("**📊 Report Statistics**")
+    st.markdown("")
+
+    col1, col2 = st.columns(2)
     with col1:
-        st.metric("Processing Time", f"{processing_time:.2f}s")
+        st.markdown(f"**Processing Time:** {processing_time:.2f}s")
+        st.markdown(f"**Sources Analyzed:** 5 Wikipedia pages")
     with col2:
-        st.metric("Model Used", "Gemini 2.5-flash-lite")
-    with col3:
-        st.metric("Sources Analyzed", "5 Wikipedia pages")
+        st.markdown("**Models Used:**")
+        st.markdown("- Gemma 3-27b-it (validation, re-ranking)")
+        st.markdown(f"- {model_used} (report generation)")
 
     st.divider()
 
-    # Action buttons
-    col1, col2 = st.columns(2)
-    with col1:
-        # Download button
-        st.download_button(
-            label="📥 Download Report",
-            data=report_text,
-            file_name=f"{industry.replace(' ', '_')}_report.md",
-            mime="text/markdown",
-            use_container_width=True
-        )
-    with col2:
-        # Generate another report button
-        if st.button("🔄 Generate Another Report", type="primary", use_container_width=True):
-            # Clear all session state variables
-            st.session_state.confirmed_industry = None
-            st.session_state.grammar_checked_input = None
-            st.session_state.selected_suggestion = None
-            st.session_state.last_input = ""
-            st.session_state.validation_result = None
-            st.session_state.last_validated_input = None
-            st.rerun()
+    # Download button
+    st.download_button(
+        label="📥 Download Report",
+        data=report_text,
+        file_name=f"{industry.replace(' ', '_')}_report.md",
+        mime="text/markdown",
+        use_container_width=True
+    )
 
