@@ -74,47 +74,10 @@ if "report_llm" not in st.session_state:
     st.session_state.report_llm = None
 
 # --- Sidebar: API Key Configuration ---
-st.sidebar.title("🔑 Configuration")
-st.sidebar.markdown("---")
+st.sidebar.header("🔑 API Key")
 
-# API Key input
-st.sidebar.subheader("Google API Key")
-
-api_key_input = st.sidebar.text_input(
-    "Enter your API key",
-    value=st.session_state.api_key if st.session_state.api_key else "",
-    type="password",
-    key="api_key_input_field",
-    label_visibility="collapsed"
-)
-
-# Validate button
-if st.sidebar.button("Validate API Key", type="primary", use_container_width=True):
-    if api_key_input and api_key_input.strip():
-        with st.sidebar.spinner("Validating API key..."):
-            is_valid, message = validate_api_key(api_key_input.strip())
-
-            if is_valid:
-                st.session_state.api_key = api_key_input.strip()
-                st.session_state.api_key_validated = True
-                # Initialize LLM
-                success, init_message = initialize_llm(st.session_state.api_key)
-                if success:
-                    st.sidebar.success("✓ API key validated successfully!")
-                    st.rerun()
-                else:
-                    st.sidebar.error(f"⚠️ {init_message}")
-                    st.session_state.api_key_validated = False
-            else:
-                st.sidebar.error(f"⚠️ {message}")
-                st.session_state.api_key_validated = False
-    else:
-        st.sidebar.warning("Please enter an API key")
-
-# Show validation status
 if st.session_state.api_key_validated:
-    st.sidebar.success("API Key Active")
-    # Option to change key
+    st.sidebar.success("✅ API Key Active")
     if st.sidebar.button("Change API Key", use_container_width=True):
         st.session_state.api_key = None
         st.session_state.api_key_validated = False
@@ -122,18 +85,32 @@ if st.session_state.api_key_validated:
         st.session_state.report_llm = None
         st.rerun()
 else:
-    st.sidebar.warning("API Key Required")
-    st.sidebar.info("""
-**Need an API key?**
+    api_key_input = st.sidebar.text_input(
+        "Enter your API key",
+        value=st.session_state.api_key if st.session_state.api_key else "",
+        type="password",
+        key="api_key_input_field",
+    )
 
-Get a free Google Generative AI API key:
-1. Visit [Google AI Studio](https://makersuite.google.com/app/apikey)
-2. Sign in with your Google account
-3. Create an API key
-4. Paste it above
-""")
+    if st.sidebar.button("Validate API Key", type="primary", use_container_width=True):
+        if api_key_input and api_key_input.strip():
+            with st.sidebar.spinner("Validating..."):
+                is_valid, message = validate_api_key(api_key_input.strip())
+                if is_valid:
+                    st.session_state.api_key = api_key_input.strip()
+                    st.session_state.api_key_validated = True
+                    success, init_message = initialize_llm(st.session_state.api_key)
+                    if success:
+                        st.rerun()
+                    else:
+                        st.sidebar.error(f"⚠️ {init_message}")
+                        st.session_state.api_key_validated = False
+                else:
+                    st.sidebar.error(f"⚠️ {message}")
+        else:
+            st.sidebar.warning("Please enter an API key")
 
-st.sidebar.markdown("---")
+    st.sidebar.info("Get a free key at [Google AI Studio](https://makersuite.google.com/app/apikey)")
 
 # --- Main Application ---
 # Block main app if API key not validated
@@ -229,16 +206,14 @@ If the input is a very vague word that clearly refers to an industry, convert it
 - ship/ships → Maritime Industry
 - hotel/hotels → Hospitality Industry
 - movie/movies/film → Entertainment Industry
-- game/games → Gaming Industry
 - drug/drugs/medicine → Pharmaceutical Industry
 - clothes/clothing → Fashion Industry
 - house/houses/home/homes → Real Estate Industry
-- oil/gas → Energy Industry
 - farm/farming → Agriculture Industry
 - And any other very vague single words that clearly refer to a specific industry
 
-IMPORTANT: Only convert very vague, simple words. Do NOT convert if the input is already specific or contains multiple words describing an industry.
-For example: "smartphone" is a valid industry, so no need to convert that.
+IMPORTANT: Only convert very vague, simple one words. Do NOT convert if the input is already specific or contains multiple words describing an industry.
+For example: "smartphone" is a valid industry, so no need to convert that; "gaming mouse" is also a valid industry and it has two words.
 
 Respond ONLY with a valid JSON object in this exact format, nothing else:
 {{
@@ -430,52 +405,6 @@ Return the trimmed report in markdown format, ensuring it's {target_words} words
             return report_text
 
 
-# --- Helper function: Expand Report ---
-def expand_report(report_text, sources, target_words=450):
-    """Intelligently expand report to target word count using source material."""
-    expand_prompt = f"""The following report is too short. Please expand it to approximately {target_words} words (MUST be between 400-500 words).
-
-Add more details from the provided sources about:
-- Industry trends and developments
-- Key players and their roles
-- Challenges and opportunities
-- Market dynamics
-
-Maintain:
-- The existing structure and headings
-- Professional tone
-- Markdown formatting
-
-IMPORTANT:
-- DO NOT include word count in the report (no "Word Count:" or similar text)
-- DO NOT use backticks (`) or code formatting
-- Use **bold** only for emphasis, no italic or code formatting
-
-Report to expand:
-{report_text}
-
-Additional sources to draw from:
-{sources[:2000]}
-
-Return the expanded report in markdown format, ensuring it's between 400-500 words. DO NOT include word count:"""
-
-    try:
-        response = st.session_state.report_llm.invoke(expand_prompt)
-        expanded_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
-        return expanded_text
-    except Exception as e:
-        # Try fallback to Gemma model
-        try:
-            st.info("ℹ️ Using backup model (Gemma) for expansion...")
-            response = st.session_state.llm.invoke(expand_prompt)
-            expanded_text = response.content[0]["text"] if isinstance(response.content, list) else str(response.content)
-            return expanded_text
-        except Exception as fallback_error:
-            st.error(f"⚠️ **API Error**: Failed to expand report. Error: {str(fallback_error)}")
-            st.warning("Returning original report.")
-            return report_text
-
-
 # --- Helper function: Generate Report with Validation ---
 def generate_report_with_validation(industry, combined_text):
     """Generate report with word count validation and automatic trim/expand if needed."""
@@ -534,30 +463,20 @@ Write the report now:"""
         # Count words in generated report
         word_count = len(report_text.split())
 
-    # Check if within acceptable range (400-500 words)
-    if 400 <= word_count <= 500:
+    # Accept if within limit (500 words or fewer)
+    if word_count <= 500:
         return report_text, word_count, "success", model_used
 
-    # If not within range, trim or expand to fit
-    if word_count > 500:
-        with st.spinner("Trimming report to fit word limit..."):
-            report_text = trim_report(report_text, target_words=480)
-            # Clean any word count text after trimming
-            report_text = clean_report_text(report_text)
-            # Sanitize markdown formatting
-            report_text = sanitize_markdown(report_text)
-        status = "trimmed"
-    else:  # word_count < 400
-        with st.spinner("Expanding report to meet word requirement..."):
-            report_text = expand_report(report_text, combined_text, target_words=450)
-            # Clean any word count text after expanding
-            report_text = clean_report_text(report_text)
-            # Sanitize markdown formatting
-            report_text = sanitize_markdown(report_text)
-        status = "expanded"
+    # Trim if over 500 words
+    with st.spinner("Trimming report to fit word limit..."):
+        report_text = trim_report(report_text, target_words=480)
+        # Clean any word count text after trimming
+        report_text = clean_report_text(report_text)
+        # Sanitize markdown formatting
+        report_text = sanitize_markdown(report_text)
 
     final_word_count = len(report_text.split())
-    return report_text, final_word_count, status, model_used
+    return report_text, final_word_count, "trimmed", model_used
 
 
 # --- Step 1: Input validation with grammar checking ---
@@ -575,7 +494,12 @@ if "cached_report" not in st.session_state:
 if "cached_industry" not in st.session_state:
     st.session_state.cached_industry = None
 
-industry_input = st.text_input("Enter an industry:")
+st.markdown("Enter an industry:")
+col_input, col_btn = st.columns([4, 1])
+with col_input:
+    industry_input = st.text_input("Enter an industry:", label_visibility="collapsed")
+with col_btn:
+    regenerate = st.button("Search", type="primary", use_container_width=True)
 
 # Reset everything if the user types a new/different industry
 if industry_input != st.session_state.last_input:
@@ -584,6 +508,11 @@ if industry_input != st.session_state.last_input:
     st.session_state.selected_suggestion = None
     st.session_state.last_input = industry_input
     # Clear cached report when input changes
+    st.session_state.cached_report = None
+    st.session_state.cached_industry = None
+
+# Clear cache when Search button is clicked (allows re-searching same industry)
+if regenerate and industry_input.strip():
     st.session_state.cached_report = None
     st.session_state.cached_industry = None
 
@@ -750,8 +679,6 @@ if st.session_state.confirmed_industry:
         st.success("✓ Report generated successfully!")
     elif status == "trimmed":
         st.success("✓ Report generated and trimmed to fit word limit!")
-    elif status == "expanded":
-        st.success("✓ Report generated and expanded to meet word requirement!")
 
     st.divider()
 
